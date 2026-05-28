@@ -22,3 +22,7 @@ dependencies {
     implementation 'org.json:json:20231013'
     implementation 'androidx.appcompat:appcompat:1.6.1'
 }
+
+dependencies {
+    implementation 'io.pocketbase:pocketbase-java:0.1.0'
+}
