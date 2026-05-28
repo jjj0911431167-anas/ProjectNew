@@ -37,44 +37,5 @@ public class PocketBaseClient {
             });
         } catch (Exception e) { callback.onError(e.getMessage()); }
     }
-    public void registerDevice(String deviceId, String deviceName, String token, Callback callback) {
-        try {
-            JSONObject json = new JSONObject();
-            json.put("device_id", deviceId);
-            json.put("device_name", deviceName);
-            Request request = new Request.Builder()
-                .url(BASE_URL + "/api/collections/devices/records")
-                .post(RequestBody.create(json.toString(), MediaType.parse("application/json")))
-                .header("Authorization", token)
-                .build();
-            client.newCall(request).enqueue(new okhttp3.Callback() {
-                @Override public void onResponse(Call call, Response response) throws IOException {
-                    if (response.isSuccessful()) callback.onSuccess("Device registered");
-                    else callback.onError("Failed: " + response.code());
-                }
-                @Override public void onFailure(Call call, IOException e) { callback.onError(e.getMessage()); }
-            });
-        } catch (Exception e) { callback.onError(e.getMessage()); }
-    }
-    public void sendCommand(String deviceId, String command, String token, Callback callback) {
-        try {
-            JSONObject json = new JSONObject();
-            json.put("device_id", deviceId);
-            json.put("command", command);
-            json.put("status", "pending");
-            Request request = new Request.Builder()
-                .url(BASE_URL + "/api/collections/commands/records")
-                .post(RequestBody.create(json.toString(), MediaType.parse("application/json")))
-                .header("Authorization", token)
-                .build();
-            client.newCall(request).enqueue(new okhttp3.Callback() {
-                @Override public void onResponse(Call call, Response response) throws IOException {
-                    if (response.isSuccessful()) callback.onSuccess("Command sent");
-                    else callback.onError("Failed: " + response.code());
-                }
-                @Override public void onFailure(Call call, IOException e) { callback.onError(e.getMessage()); }
-            });
-        } catch (Exception e) { callback.onError(e.getMessage()); }
-    }
     public interface Callback { void onSuccess(String result); void onError(String error); }
 }
